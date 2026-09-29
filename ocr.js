@@ -69,9 +69,14 @@ async function preprocessForOCR(buffer) {
   // no .threshold(): Tesseract binarizes better on its own
 }
 
+// SINGLE_COLUMN (PSM 4) reads the page row by row. With AUTO, a form laid
+// out as "LABEL:   value" columns (the birth certificate) was read as every
+// label first and every value after, so auto-fill couldn't pair them.
+// Tested Sept 29 on all 9 mock documents: same confidence and speed, and
+// identical text on the documents that already read correctly.
 async function recognize(worker, buffer) {
   const { PSM } = require('tesseract.js')
-  await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO })
+  await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_COLUMN })
   const { data } = await worker.recognize(buffer)
   return { text: data.text, confidence: data.confidence }
 }
