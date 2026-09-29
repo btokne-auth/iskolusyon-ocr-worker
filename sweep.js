@@ -8,14 +8,16 @@
 
 const { createClient } = require('@supabase/supabase-js')
 const { createOcrWorker, extractText } = require('./ocr')
-const { extractPSAFields, extractGradesFields } = require('./textExtraction')
+const { extractPSAFields, extractVoterFields, extractGradesFields } = require('./textExtraction')
 
 const BUCKET = 'scholarship-documents'
 
 // Same thresholds as the main app.
 const LOW_CONFIDENCE_THRESHOLD = 60
 const MIN_OCR_TEXT_LENGTH = 3
-const AUTOFILL_SCOPED_TYPES = ['birthcert', 'form138']
+// birthcert and voterid fill the applicant's Personal Information form;
+// form138's general average is stored for admins only.
+const AUTOFILL_SCOPED_TYPES = ['birthcert', 'voterid', 'form138']
 
 // How many pending rows to fetch per query. Rows are still processed one by one.
 const BATCH_SIZE = 10
@@ -99,19 +101,24 @@ async function processDocument(worker, row) {
     let extraction = null
     if (AUTOFILL_SCOPED_TYPES.includes(documentType) && extractedText) {
       if (documentType === 'birthcert') extraction = extractPSAFields(extractedText)
+      else if (documentType === 'voterid') extraction = extractVoterFields(extractedText)
       else if (documentType === 'form138') extraction = extractGradesFields(extractedText)
     }
 
     if (extraction) {
       for (const [fieldName, value] of Object.entries(extraction.fields)) {
-        await supabase.from('extracted_fields').upsert({
+        const { error: fieldError } = await supabase.from('extracted_fields').upsert({
           file_path: filePath,
           document_type: documentType,
           field_name: fieldName,
           extracted_value: value,
           needs_review: extraction.needsReview,
         })
+        // Supabase returns errors instead of throwing, so these were silent before.
+        if (fieldError) console.error(`[sweep] Could not save auto-fill field ${fieldName} for ${filePath}:`, fieldError.message)
       }
+      const found = Object.values(extraction.fields).filter(Boolean).length
+      console.log(`[sweep] Auto-fill for ${filePath}: ${found} of ${Object.keys(extraction.fields).length} fields read`)
     }
   } catch (err) {
     console.error(`[sweep] Auto-fill extraction failed for ${filePath} (non-blocking):`, err.message)
